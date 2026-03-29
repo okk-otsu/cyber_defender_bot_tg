@@ -1,15 +1,13 @@
 package main
 
 import (
-	"fmt"
-
 	"cyber-defender-bot-tg/internal/config"
+	"cyber-defender-bot-tg/internal/telegram"
 )
 
 func main() {
 	cfg := config.MustLoad()
 
-	fmt.Println("telegram token loaded:", cfg.TelegramBotToken != "")
-	fmt.Println("virustotal api key loaded:", cfg.VirusTotalAPIKey != "")
-	fmt.Println("max file size bytes:", cfg.MaxFileSizeBytes)
+	bot := telegram.NewBot(cfg.TelegramBotToken)
+	bot.Run()
 }
