@@ -51,7 +51,10 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 		h.handleDocument(chatID, message.Document)
 
 	case message.Text == "/start":
-		h.sendMessage(chatID, "Привет. Отправь мне файл как document.")
+		h.sendMessage(chatID, startMessageText())
+
+	case message.Text == "/help":
+		h.sendMessage(chatID, helpMessageText())
 
 	case message.Text == "/ping":
 		h.sendMessage(chatID, "pong")
@@ -155,4 +158,48 @@ func buildVerdictText(
 		stats.Suspicious,
 		stats.Undetected,
 	)
+}
+
+func startMessageText() string {
+	return `👋 Привет!
+
+Я — бот для проверки файлов на вирусы через сервис VirusTotal.
+
+Что я умею:
+📄 Проверяю файлы на наличие вредоносного кода
+🛡 Использую несколько антивирусных движков
+⏳ Проверка обычно занимает до 1 минуты
+
+Как пользоваться:
+1. Отправь файл как "документ".
+2. Подожди результат проверки.
+
+ℹ️ Для списка команд напиши /help`
+}
+
+func helpMessageText() string {
+	return `📖 Справка по использованию
+
+Доступные команды:
+
+/start — показать приветствие
+/help — показать эту справку
+/ping — проверить, работает ли бот
+
+Как проверить файл:
+
+1. Отправь файл в чат как "документ"
+2. Бот загрузит файл
+3. Отправит его на проверку
+4. Вернёт результат
+
+Ограничения:
+
+📦 Максимальный размер файла: 10 МБ
+⏳ Проверка может занять до 1 минуты
+
+Важно:
+
+⚠️ Даже если угрозы не обнаружены,
+это не даёт 100% гарантии безопасности.`
 }
