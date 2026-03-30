@@ -16,6 +16,7 @@ func main() {
 	bot := telegram.NewBot(
 		cfg.TelegramBotToken,
 		vtClient,
+		&cfg,
 	)
 
 	bot.Run()
