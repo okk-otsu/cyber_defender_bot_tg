@@ -1,8 +1,9 @@
 package telegram
 
 import (
-	"fmt"
+	"cyber-defender-bot-tg/internal/virustotal"
 	"log"
+	"os"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -10,12 +11,17 @@ import (
 type Handler struct {
 	api        *tgbotapi.BotAPI
 	downloader *Downloader
+	vtClient   *virustotal.Client
 }
 
-func NewHandler(api *tgbotapi.BotAPI) *Handler {
+func NewHandler(
+	api *tgbotapi.BotAPI,
+	vtClient *virustotal.Client,
+) *Handler {
 	return &Handler{
 		api:        api,
 		downloader: NewDownloader(api),
+		vtClient:   vtClient,
 	}
 }
 
@@ -27,7 +33,6 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 	log.Printf("update received")
 
 	message := update.Message
-	log.Printf("message received")
 
 	if message.Document != nil {
 		log.Printf("document received: %s", message.Document.FileName)
@@ -54,23 +59,46 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 	}
 }
 
-func (h *Handler) handleDocument(chatID int64, doc *tgbotapi.Document) {
+func (h *Handler) handleDocument(
+	chatID int64,
+	doc *tgbotapi.Document,
+) {
+
 	localPath, err := h.downloader.DownloadDocument(doc)
 	if err != nil {
 		log.Printf("download document: %v", err)
-		h.sendMessage(chatID, "Не удалось скачать файл.")
+
+		h.sendMessage(
+			chatID,
+			"Не удалось скачать файл.",
+		)
+
 		return
 	}
 
-	h.sendMessage(
-		chatID,
-		fmt.Sprintf(
-			"Файл скачан.\nИмя: %s\nРазмер: %d байт",
-			doc.FileName,
-			doc.FileSize,
-		),
-	)
+	defer os.Remove(localPath)
+
 	log.Printf("file downloaded: %s", localPath)
+
+	analysisID, err := h.vtClient.UploadFile(localPath)
+	if err != nil {
+
+		log.Printf("upload file: %v", err)
+
+		h.sendMessage(
+			chatID,
+			"Не удалось отправить файл на проверку.",
+		)
+
+		return
+	}
+
+	log.Printf(
+		"file uploaded to virustotal: %s",
+		analysisID,
+	)
+
+	h.sendMessage(chatID, "Файл получен. Отправляю на проверку...")
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {

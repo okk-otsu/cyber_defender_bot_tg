@@ -3,11 +3,20 @@ package main
 import (
 	"cyber-defender-bot-tg/internal/config"
 	"cyber-defender-bot-tg/internal/telegram"
+	"cyber-defender-bot-tg/internal/virustotal"
 )
 
 func main() {
 	cfg := config.MustLoad()
 
-	bot := telegram.NewBot(cfg.TelegramBotToken)
+	vtClient := virustotal.NewClient(
+		cfg.VirusTotalAPIKey,
+	)
+
+	bot := telegram.NewBot(
+		cfg.TelegramBotToken,
+		vtClient,
+	)
+
 	bot.Run()
 }
