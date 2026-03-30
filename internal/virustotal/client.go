@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -12,7 +13,11 @@ import (
 	"time"
 )
 
-const baseURL = "https://www.virustotal.com/api/v3"
+const (
+	maxAnalysisAttempts  = 20
+	analysisPollInterval = 3 * time.Second
+	baseURL              = "https://www.virustotal.com/api/v3"
+)
 
 func NewClient(apiKey string) *Client {
 	return &Client{
@@ -82,16 +87,74 @@ func (c *Client) newUploadRequest(body *bytes.Buffer, contentType string) (*http
 }
 
 func decodeUploadResponse(resp *http.Response) (string, error) {
+	if resp.StatusCode == http.StatusConflict {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", &AlreadySubmittedError{
+			Message: string(respBody),
+		}
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result UploadResponse
-	err := json.NewDecoder(resp.Body).Decode(&result)
-	if err != nil {
-		return "", err
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
 	}
 
 	return result.Data.ID, nil
+}
+
+func (c *Client) GetAnalysis(analysisID string) (*AnalysisResponse, error) {
+	req, err := http.NewRequest(
+		http.MethodGet,
+		baseURL+"/analyses/"+analysisID,
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("x-apikey", c.apiKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result AnalysisResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+func (c *Client) WaitForAnalysis(analysisID string) (*AnalysisResponse, error) {
+	for i := 0; i < 20; i++ {
+		result, err := c.GetAnalysis(analysisID)
+		if err != nil {
+			return nil, err
+		}
+
+		status := result.Data.Attributes.Status
+
+		log.Printf("analysis status: %s, attempt: %d", status, i+1)
+
+		if status == "completed" {
+			return result, nil
+		}
+
+		time.Sleep(3 * time.Second)
+	}
+
+	return nil, fmt.Errorf("analysis did not complete in time")
 }

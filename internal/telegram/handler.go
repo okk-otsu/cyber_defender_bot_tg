@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"cyber-defender-bot-tg/internal/virustotal"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 
@@ -63,42 +65,46 @@ func (h *Handler) handleDocument(
 	chatID int64,
 	doc *tgbotapi.Document,
 ) {
-
 	localPath, err := h.downloader.DownloadDocument(doc)
 	if err != nil {
 		log.Printf("download document: %v", err)
-
-		h.sendMessage(
-			chatID,
-			"Не удалось скачать файл.",
-		)
-
+		h.sendMessage(chatID, "Не удалось скачать файл.")
 		return
 	}
-
 	defer os.Remove(localPath)
 
 	log.Printf("file downloaded: %s", localPath)
 
+	h.sendMessage(chatID, "Файл получен. Отправляю на проверку...")
+
 	analysisID, err := h.vtClient.UploadFile(localPath)
 	if err != nil {
+		var alreadySubmittedErr *virustotal.AlreadySubmittedError
+		if errors.As(err, &alreadySubmittedErr) {
+			log.Printf("file already submitted: %v", err)
+			h.sendMessage(chatID, "Этот файл уже отправлен на проверку. Подожди немного и попробуй снова.")
+			return
+		}
 
 		log.Printf("upload file: %v", err)
-
-		h.sendMessage(
-			chatID,
-			"Не удалось отправить файл на проверку.",
-		)
-
+		h.sendMessage(chatID, "Не удалось отправить файл на проверку.")
 		return
 	}
 
-	log.Printf(
-		"file uploaded to virustotal: %s",
-		analysisID,
-	)
+	log.Printf("file uploaded to virustotal: %s", analysisID)
 
-	h.sendMessage(chatID, "Файл получен. Отправляю на проверку...")
+	result, err := h.vtClient.WaitForAnalysis(analysisID)
+	if err != nil {
+		log.Printf("wait for analysis: %v", err)
+		h.sendMessage(chatID, "Файл отправлен на проверку, но не удалось получить результат.")
+		return
+	}
+
+	stats := result.Data.Attributes.Stats
+
+	text := buildVerdictText(doc.FileName, stats)
+
+	h.sendMessage(chatID, text)
 }
 
 func (h *Handler) sendMessage(chatID int64, text string) {
@@ -107,4 +113,46 @@ func (h *Handler) sendMessage(chatID int64, text string) {
 	if _, err := h.api.Send(msg); err != nil {
 		log.Printf("send message: %v", err)
 	}
+}
+
+func buildVerdictText(
+	filename string,
+	stats virustotal.AnalysisStats,
+) string {
+
+	totalEngines :=
+		stats.Malicious +
+			stats.Suspicious +
+			stats.Harmless +
+			stats.Undetected
+
+	var verdict string
+
+	switch {
+	case stats.Malicious > 0:
+		verdict = "⚠️ Обнаружены вредоносные срабатывания."
+
+	case stats.Suspicious > 0:
+		verdict = "⚠️ Обнаружены подозрительные срабатывания."
+
+	default:
+		verdict = "✅ Угроз не обнаружено."
+	}
+
+	return fmt.Sprintf(
+		"Файл: %s\n\n"+
+			"%s\n\n"+
+			"Проверено антивирусами: %d\n\n"+
+			"Результаты:\n"+
+			"Вредоносные срабатывания: %d\n"+
+			"Подозрительные срабатывания: %d\n"+
+			"Без обнаруженных угроз: %d\n",
+
+		filename,
+		verdict,
+		totalEngines,
+		stats.Malicious,
+		stats.Suspicious,
+		stats.Undetected,
+	)
 }
