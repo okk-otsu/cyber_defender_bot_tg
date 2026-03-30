@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"cyber-defender-bot-tg/internal/config"
 	"cyber-defender-bot-tg/internal/virustotal"
 	"log"
 
@@ -15,14 +16,15 @@ type Bot struct {
 func NewBot(
 	token string,
 	vtClient *virustotal.Client,
+	cfg *config.Config,
 ) *Bot {
 
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
-		log.Fatalf("create telegram bot api: %v", err)
+		log.Fatal("create telegram bot:", err)
 	}
 
-	handler := NewHandler(api, vtClient)
+	handler := NewHandler(api, vtClient, cfg)
 
 	return &Bot{
 		api:     api,

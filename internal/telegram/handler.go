@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"cyber-defender-bot-tg/internal/config"
 	"cyber-defender-bot-tg/internal/virustotal"
 	"errors"
 	"fmt"
@@ -14,16 +15,20 @@ type Handler struct {
 	api        *tgbotapi.BotAPI
 	downloader *Downloader
 	vtClient   *virustotal.Client
+	cfg        *config.Config
 }
 
 func NewHandler(
 	api *tgbotapi.BotAPI,
 	vtClient *virustotal.Client,
+	cfg *config.Config,
 ) *Handler {
+
 	return &Handler{
 		api:        api,
 		downloader: NewDownloader(api),
 		vtClient:   vtClient,
+		cfg:        cfg,
 	}
 }
 
@@ -54,7 +59,7 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 		h.sendMessage(chatID, startMessageText())
 
 	case message.Text == "/help":
-		h.sendMessage(chatID, helpMessageText())
+		h.sendMessage(chatID, helpMessageText(h.cfg.MaxFileSizeBytes))
 
 	case message.Text == "/ping":
 		h.sendMessage(chatID, "pong")
@@ -68,45 +73,90 @@ func (h *Handler) handleDocument(
 	chatID int64,
 	doc *tgbotapi.Document,
 ) {
-	localPath, err := h.downloader.DownloadDocument(doc)
-	if err != nil {
-		log.Printf("download document: %v", err)
-		h.sendMessage(chatID, "Не удалось скачать файл.")
+	if err := h.validateDocumentSize(doc); err != nil {
+		h.sendMessage(chatID, err.Error())
 		return
 	}
-	defer os.Remove(localPath)
-
-	log.Printf("file downloaded: %s", localPath)
 
 	h.sendMessage(chatID, "Файл получен. Отправляю на проверку...")
 
-	analysisID, err := h.vtClient.UploadFile(localPath)
+	analysisID, err := h.uploadDocumentForScan(chatID, doc)
 	if err != nil {
-		var alreadySubmittedErr *virustotal.AlreadySubmittedError
-		if errors.As(err, &alreadySubmittedErr) {
-			log.Printf("file already submitted: %v", err)
-			h.sendMessage(chatID, "Этот файл уже отправлен на проверку. Подожди немного и попробуй снова.")
-			return
-		}
-
-		log.Printf("upload file: %v", err)
-		h.sendMessage(chatID, "Не удалось отправить файл на проверку.")
+		h.sendMessage(chatID, err.Error())
 		return
 	}
 
-	log.Printf("file uploaded to virustotal: %s", analysisID)
-
-	result, err := h.vtClient.WaitForAnalysis(analysisID)
+	stats, err := h.waitScanResult(analysisID)
 	if err != nil {
 		log.Printf("wait for analysis: %v", err)
 		h.sendMessage(chatID, "Файл отправлен на проверку, но не удалось получить результат.")
 		return
 	}
 
-	stats := result.Data.Attributes.Stats
+	h.sendVerdict(chatID, doc.FileName, stats)
+}
 
-	text := buildVerdictText(doc.FileName, stats)
+func (h *Handler) validateDocumentSize(doc *tgbotapi.Document) error {
+	if int64(doc.FileSize) <= h.cfg.MaxFileSizeBytes {
+		return nil
+	}
 
+	return fmt.Errorf(
+		"Файл слишком большой.\n"+
+			"Размер файла: %.1f МБ\n"+
+			"Максимальный размер: %d МБ.",
+		float64(doc.FileSize)/(1024*1024),
+		h.cfg.MaxFileSizeBytes/(1024*1024),
+	)
+}
+
+func (h *Handler) uploadDocumentForScan(
+	chatID int64,
+	doc *tgbotapi.Document,
+) (string, error) {
+	localPath, err := h.downloader.DownloadDocument(doc)
+	if err != nil {
+		log.Printf("download document: %v", err)
+		return "", fmt.Errorf("не удалось скачать файл")
+	}
+	defer os.Remove(localPath)
+
+	log.Printf("file downloaded: %s", localPath)
+
+	analysisID, err := h.vtClient.UploadFile(localPath)
+	if err != nil {
+		var alreadySubmittedErr *virustotal.AlreadySubmittedError
+		if errors.As(err, &alreadySubmittedErr) {
+			log.Printf("file already submitted: %v", err)
+			return "", fmt.Errorf("этот файл уже отправлен на проверку. Подожди немного и попробуй снова")
+		}
+
+		log.Printf("upload file: %v", err)
+		return "", fmt.Errorf("не удалось отправить файл на проверку")
+	}
+
+	log.Printf("file uploaded to virustotal: %s", analysisID)
+
+	return analysisID, nil
+}
+
+func (h *Handler) waitScanResult(
+	analysisID string,
+) (virustotal.AnalysisStats, error) {
+	result, err := h.vtClient.WaitForAnalysis(analysisID)
+	if err != nil {
+		return virustotal.AnalysisStats{}, err
+	}
+
+	return result.Data.Attributes.Stats, nil
+}
+
+func (h *Handler) sendVerdict(
+	chatID int64,
+	filename string,
+	stats virustotal.AnalysisStats,
+) {
+	text := buildVerdictText(filename, stats)
 	h.sendMessage(chatID, text)
 }
 
@@ -177,8 +227,11 @@ func startMessageText() string {
 ℹ️ Для списка команд напиши /help`
 }
 
-func helpMessageText() string {
-	return `📖 Справка по использованию
+func helpMessageText(maxFileSizeBytes int64) string {
+
+	maxMB := maxFileSizeBytes / (1024 * 1024)
+
+	return fmt.Sprintf(`📖 Справка по использованию
 
 Доступные команды:
 
@@ -195,11 +248,13 @@ func helpMessageText() string {
 
 Ограничения:
 
-📦 Максимальный размер файла: 10 МБ
+📦 Максимальный размер файла: %d МБ
 ⏳ Проверка может занять до 1 минуты
 
 Важно:
 
 ⚠️ Даже если угрозы не обнаружены,
-это не даёт 100% гарантии безопасности.`
+это не даёт 100%% гарантии безопасности.`,
+		maxMB,
+	)
 }
