@@ -72,25 +72,25 @@ cyber-defender-bot-tg/
 │
 ├── cmd/
 │   └── bot/
-│       └── main.go          # точка входа в приложение
+│       └── main.go          
 │
 ├── internal/
 │   ├── config/
-│   │   ├── config.go        # загрузка конфигурации из .env
+│   │   ├── config.go       
 │   │   └── doc.go
 │   │
 │   ├── telegram/
-│   │   ├── bot.go           # запуск Telegram-бота
+│   │   ├── bot.go           
 │   │   ├── doc.go           
-│   │   ├── handler.go       # обработка сообщений
-│   │   └── downloader.go    # загрузка файлов из Telegram
+│   │   ├── handler.go       
+│   │   └── downloader.go    
 │   │
 │   └── virustotal/
-│       ├── client.go        # клиент для работы с VirusTotal API
+│       ├── client.go        
 │       ├── doc.go
-│       └── types.go         # структуры ответов API
+│       └── types.go         
 │
-├── .env.example             # пример переменных окружения
+├── .env.example             
 ├── .gitignore
 ├── README.md
 ├── go.sum
